@@ -1,0 +1,314 @@
+---
+title: "Investigation of Crime in Seattle and San Francisco"
+author: "Jeremy Beck"
+date: "August 20, 2016"
+output: 
+  html_document:
+    code_folding: hide
+---
+
+## Overview
+
+An investigation of crime rates in Seattle and San Francisco over the summer of 2014 was performed using a sample of reported crimes spanning June-August, 2014. In order to compare crimes between cities, the NIBRS crime categories were applied to each data set. In total, the data sets comprise 28,993 crimes reported in San Francisco, and 32,779 crimes reported in Seattle in June, July, and August of 2014. 
+
+This report will present overall trends in crime rates between the two cities, as well as some interesting trends in specific crimes throughout the summer of 2014.  
+
+
+## Methodology
+
+In order to be as reproducible as possible, the code used to load and parse the data sets in this report, as well as the code used to generate the figures presented in this analysis is included in-line with the document.  In order to keep the document readable, the code chunks are hidden by default, but can be accessed by clicking the 'Code' button on the right-hand side of the document at each step. Try it out here ------>
+
+```{r, eval=F} 
+"THAT'S HOW IT WORKS"
+
+```
+
+### Data Loading
+
+To see the data loading and parsing process, please expand the code chunks. Data sets were loaded into R following downloading from the Coursera website, and basic time and date formatting were carried out with the lubridate package. 
+
+```{r, data_load, message=F, warning=F}
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+library(ggmap)
+library(RColorBrewer)
+
+#------------------------
+# Data Load
+#------------------------
+wd_path <- '~/Library/Mobile\ Documents/com~apple~CloudDocs/UW_Coursera/datasci_course_materials/assignment6/'
+
+sf_dat <- read.csv(paste0(wd_path,'sanfrancisco_incidents_summer_2014.csv'), 
+	stringsAsFactors=F, header=T, sep=',')
+
+seattle_dat <- read.csv(paste0(wd_path, 'seattle_incidents_summer_2014.csv'), 
+	stringsAsFactors=F, header=T, sep=',')
+
+sf_dat <- sf_dat %>%
+	transform(DayOfWeek = factor(DayOfWeek, labels=c('Sun','Mon','Tues','Wed','Thur','Fri', 'Sat'), ordered=T),
+		Date = lubridate::mdy(Date),
+		Time = hm(Time)) 
+
+#-------------------------------
+# Basic Date/Time Processing
+#-------------------------------
+seattle_dat <- seattle_dat %>%
+	transform(Date = mdy(substr(Occurred.Date.or.Date.Range.Start,1,10)),
+		Time = hms(substr(Occurred.Date.or.Date.Range.Start,12,22)))
+
+seattle_dat$Time@hour <- ifelse(substr(seattle_dat$Occurred.Date.or.Date.Range.Start,21,22) == 'AM', 
+	seattle_dat$Time@hour, seattle_dat$Time@hour + 12)
+
+
+```
+
+### Categorizing Crimes Between Cities
+
+In order to compare similar crimes between cities, I used the NIBRS crime categorization (mapping available [here]( http://data.denvergov.org/download/gis/crime/csv/offense_codes.csv)), which can simplify crimes down to 15 overall categories. Conveniently, the NIBRS codes are present in the Seattle data set, but unfortunately not present in the San Francisco data set. I therefore had to hand-map the categories of crime in the San Francisco Data Set. If any reported offenses did not map to a crime code in NIBRS, I manually selected the most appropriate category. The major issue for this project is that the San Francisco data set contains an offense type of 'OTHER OFFENSES' that appears to contain observations of fraud, harassment but would require complex logic to parse. Due to the short timeframe of this project, I decided to categorize 'OTHER OFFENSES' into the NIBRS category 'All Other Crimes'. In order to make the comparison of crimes between Seattle and San Francisco as robust as possible, I did however include special logic for two categories in the San Francisco data set after an initial investigation of the data sets:
+
+  * 'LARCENY/THEFT' looks for 'AUTO' in the description, and separates the observations into 'Theft from Motor Vehicle' or 'Larceny' accordingly.
+  * 'WEAPON LAWS' looks for the terms 'Intent', 'Exhibit', or 'Assault' and categorizes the observations into 'Aggravated Assault' or 'All Other Crimes' accordingly. 
+  
+All other NIBRS assignments are accessible in the code chunks for this section.
+
+```{r, crime_coding}
+# Pull in the NIBRS data set
+crime_codes <- read.csv(paste0(wd_path, 'offense_codes.csv'), header=T, stringsAsFactors=F)
+crime_codes$OFFENSE_CODE <- as.character(crime_codes$OFFENSE_CODE)
+crime_codes <- crime_codes %>%
+	select(OFFENSE_CODE, OFFENSE_CATEGORY_NAME)
+crime_codes <- crime_codes[!duplicated(crime_codes$OFFENSE_CODE),]
+# Join the NIBRS data set to the Offense.Code field in the Seattle Crimes data set
+seattle_dat <- left_join(seattle_dat, crime_codes, by=c("Offense.Code"="OFFENSE_CODE"))
+
+# These offense types I had to look up and assign manually for Seattle. 
+seattle_dat$OFFENSE_CATEGORY_NAME[seattle_dat$Offense.Code == '2316'] <- 'White Collar Crime'
+seattle_dat$OFFENSE_CATEGORY_NAME[seattle_dat$Offense.Code == '2502'] <- 'White Collar Crime'
+seattle_dat$OFFENSE_CATEGORY_NAME[seattle_dat$Offense.Code == '2599'] <- 'White Collar Crime'
+seattle_dat$OFFENSE_CATEGORY_NAME[seattle_dat$Offense.Code == '2610'] <- 'White Collar Crime'
+seattle_dat$OFFENSE_CATEGORY_NAME[seattle_dat$Offense.Code == '2802'] <- 'All Other Crimes'
+seattle_dat$OFFENSE_CATEGORY_NAME[seattle_dat$Offense.Code == '3899'] <- 'Other Crimes Against Persons'
+seattle_dat$OFFENSE_CATEGORY_NAME[seattle_dat$Offense.Code == '5208'] <- 'All Other Crimes'
+seattle_dat$OFFENSE_CATEGORY_NAME[seattle_dat$Offense.Code == '5403'] <- 'Drug & Alcohol'
+seattle_dat$OFFENSE_CATEGORY_NAME[seattle_dat$Offense.Code == '5404'] <- 'Drug & Alcohol'
+seattle_dat$OFFENSE_CATEGORY_NAME[seattle_dat$Offense.Code == '999'] <- 'Murder'
+seattle_dat$OFFENSE_CATEGORY_NAME[seattle_dat$Offense.Code == 'X'] <- 'Non-Criminal'
+
+# Create custom mappings for San Francisco for each unique 'Category' field in the data set
+sf_dat$OFFENSE_CATEGORY_NAME <- NA
+sf_dat$OFFENSE_CATEGORY_NAME[sf_dat$Category == 'ARSON'] <- 'Arson'
+sf_dat$OFFENSE_CATEGORY_NAME[sf_dat$Category == 'ASSAULT'] <- 'Aggravated Assault'
+sf_dat$OFFENSE_CATEGORY_NAME[sf_dat$Category == 'BRIBERY'] <- 'All Other Crimes'
+sf_dat$OFFENSE_CATEGORY_NAME[sf_dat$Category == 'BURGLARY'] <- 'Burglary'
+sf_dat$OFFENSE_CATEGORY_NAME[sf_dat$Category == 'DISORDERLY CONDUCT'] <- 'Public Disorder'
+sf_dat$OFFENSE_CATEGORY_NAME[sf_dat$Category == 'DRIVING UNDER THE INFLUENCE'] <- 'Drug & Alcohol'
+sf_dat$OFFENSE_CATEGORY_NAME[sf_dat$Category == 'DRUG/NARCOTIC'] <- 'Drug & Alcohol'
+sf_dat$OFFENSE_CATEGORY_NAME[sf_dat$Category == 'DRUNKENNESS'] <- 'Drug & Alcohol'
+sf_dat$OFFENSE_CATEGORY_NAME[sf_dat$Category == 'EMBEZZLEMENT'] <- 'White Collar Crime' 
+sf_dat$OFFENSE_CATEGORY_NAME[sf_dat$Category == 'EXTORTION'] <- 'White Collar Crime'
+sf_dat$OFFENSE_CATEGORY_NAME[sf_dat$Category == 'FAMILY OFFENSES'] <- 'Aggravated Assault' # CHECK THIS ONE - Other Crimes?
+sf_dat$OFFENSE_CATEGORY_NAME[sf_dat$Category == 'FORGERY/COUNTERFEITING'] <- 'White Collar Crime'
+sf_dat$OFFENSE_CATEGORY_NAME[sf_dat$Category == 'FRAUD'] <- 'White Collar Crime'
+sf_dat$OFFENSE_CATEGORY_NAME[sf_dat$Category == 'GAMBLING'] <- 'All Other Crimes'
+sf_dat$OFFENSE_CATEGORY_NAME[sf_dat$Category == 'KIDNAPPING'] <- 'Other Crimes Against Persons'
+sf_dat$OFFENSE_CATEGORY_NAME[sf_dat$Category == 'LARCENY/THEFT'] <- 'Larceny'
+sf_dat$OFFENSE_CATEGORY_NAME[sf_dat$Category == 'LIQUOR LAWS'] <- 'Drug & Alcohol'
+sf_dat$OFFENSE_CATEGORY_NAME[sf_dat$Category == 'LOITERING'] <- 'Public Disorder'
+sf_dat$OFFENSE_CATEGORY_NAME[sf_dat$Category == 'MISSING PERSON'] <- 'All Other Crimes'
+sf_dat$OFFENSE_CATEGORY_NAME[sf_dat$Category == 'NON-CRIMINAL'] <- 'Non-Criminal'
+sf_dat$OFFENSE_CATEGORY_NAME[sf_dat$Category == 'PORNOGRAPHY/OBSCENE MAT'] <- 'Other Crimes Against Persons'
+sf_dat$OFFENSE_CATEGORY_NAME[sf_dat$Category == 'PROSTITUTION'] <- 'Public Disorder'
+sf_dat$OFFENSE_CATEGORY_NAME[sf_dat$Category == 'ROBBERY'] <- 'Robbery'
+sf_dat$OFFENSE_CATEGORY_NAME[sf_dat$Category == 'RUNAWAY'] <- 'All Other Crimes'
+sf_dat$OFFENSE_CATEGORY_NAME[sf_dat$Category == 'SECONDARY CODES'] <- 'All Other Crimes'
+sf_dat$OFFENSE_CATEGORY_NAME[sf_dat$Category == 'STOLEN PROPERTY'] <- 'All Other Crimes'
+sf_dat$OFFENSE_CATEGORY_NAME[sf_dat$Category == 'SUICIDE'] <- 'All Other Crimes'
+sf_dat$OFFENSE_CATEGORY_NAME[sf_dat$Category == 'SUSPICIOUS OCC'] <- 'All Other Crimes' # CHECK THIS PUBLIC DISORDER?
+sf_dat$OFFENSE_CATEGORY_NAME[sf_dat$Category == 'TRESPASS'] <- 'All Other Crimes'
+sf_dat$OFFENSE_CATEGORY_NAME[sf_dat$Category == 'VANDALISM'] <- 'Public Disorder'
+sf_dat$OFFENSE_CATEGORY_NAME[sf_dat$Category == 'VEHICLE THEFT'] <- 'Auto Theft'
+sf_dat$OFFENSE_CATEGORY_NAME[sf_dat$Category == 'WARRANTS'] <- 'All Other Crimes'
+# Some Special Parsing here to deal with Possession of Weapon vs Brandishing, etc...
+sf_dat$OFFENSE_CATEGORY_NAME <- ifelse(sf_dat$Category == 'WEAPON LAWS',
+	ifelse(grepl('INTENT|EXHIB|ASSAULT', sf_dat$Descript, ignore.case=T),'Aggravated Assault','All Other Crimes'),
+	sf_dat$OFFENSE_CATEGORY_NAME)
+# Special Parsing here to deal with whether property was stolen out of a car, or not. 
+sf_dat$OFFENSE_CATEGORY_NAME <- ifelse(sf_dat$Category == 'LARCENY/THEFT',
+	ifelse(grepl('AUTO', sf_dat$Descript, ignore.case=T),'Theft from Motor Vehicle','Larceny'),
+	sf_dat$OFFENSE_CATEGORY_NAME)
+sf_dat$OFFENSE_CATEGORY_NAME[sf_dat$Category == 'OTHER OFFENSES'] <- 'All Other Crimes'
+
+```
+
+Now that I have a consistent set of crime categories across data sets, I can combine the two cities together into a single data set, and correct for population differences between the two cities. I was unable to find a consistent source for the population of each city during the summer of 2014, and so I instead relied on the estimated 2015 populations obtained from the Census Bureau retrievable at the following address: http://www.census.gov/quickfacts/table/AGE115210/5363000,06075
+
+```{r, intercity_join}
+seattle_dat.tojoin <- seattle_dat[c("Date","Time","OFFENSE_CATEGORY_NAME")]
+seattle_dat.tojoin$OFFENSE_CATEGORY_NAME <- as.character(seattle_dat.tojoin$OFFENSE_CATEGORY_NAME)
+seattle_dat.tojoin$CITY <- "Seattle"
+#seattle_dat.tojoin$Time <- as.POSIXct(seattle_dat.tojoin$Time)
+sf_dat.tojoin <- sf_dat[c("Date","Time","OFFENSE_CATEGORY_NAME")]
+sf_dat.tojoin$OFFENSE_CATEGORY_NAME <- as.character(sf_dat.tojoin$OFFENSE_CATEGORY_NAME)
+sf_dat.tojoin$CITY <- "San Francisco"
+joint_dat <- rbind(seattle_dat.tojoin, sf_dat.tojoin)
+
+# And we'll put in the population information for good measure.
+# Census Comparison 2015
+#http://www.census.gov/quickfacts/table/AGE115210/5363000,06075
+seattle_pop <- 684451
+sanfran_pop <- 805816
+
+joint_dat$pop <- ifelse(joint_dat$CITY == 'San Francisco', 805816, 684451)
+```
+
+## Preponderance of Crimes
+
+One of the most interesting things to see in this data set is the overall number of reported crimes between the two cities.  The bar chart below indicates the total number of crimes in each NIBRS category (Note that these are the raw reported numbers, and not corrected for population differences between the cities.) 
+
+```{r, between_cities, fig.width=10}
+top_crimes <- joint_dat %>%
+	group_by(OFFENSE_CATEGORY_NAME, CITY) %>%
+	mutate(Reported_Offenses = n(), 
+		Reported_Offenses_percap = n()/pop) 
+
+top_crimes$OFFENSE_CATEGORY_NAME <- factor(top_crimes$OFFENSE_CATEGORY_NAME,
+	levels=names(sort(table(joint_dat$OFFENSE_CATEGORY_NAME), decreasing=F)))
+
+ggplot(data=top_crimes, aes(OFFENSE_CATEGORY_NAME, Reported_Offenses, fill=CITY)) + 
+	geom_bar(stat='identity', position="dodge") + coord_flip() +
+	labs(title="Reported Number of Crimes: June-Aug 2014", 
+			 y="Number of Reported Incidents",
+			 x="NIBRS Category")
+
+
+```
+
+From the above chart showing total reported crimes, it appears that theft from motor vehicles is the overall most frequent crime when summing reported incidents from each city.  The next category 'All Other Crimes' has a very high number of reported incidents in San Francisco, but this appears to be an artifact of how I chose to categorize the 'OTHER CRIMES' category in the San Francisco data set. The second most frequent specific crime in each city was Larceny. Fortunately, crimes like robbery, arson, and murder were fairly infrequent in the data sets. 
+
+The general trend I am seeing in these data are that for each category of crime (other than the 'All Other' category), the total number of reported cases is higher in Seattle than in San Francisco. This is somewhat surprising, given that the population of San Francisco is roughly 15-20% higher than Seattle's - San Francisco's 2015 population was 805815 vs Seattle's 684451.  We should probably start digging into the per-capita crime rates by correcting each data set for the city's population. 
+
+
+## Per-Capita Crime Rates 
+
+The per-capita crime rate for each city was calculated by aggregating the reports of all crimes, daily, and dividing by each city's total population. Since on a day-to-day basis there is quite a lot of variation in the number of reported crimes, I have applied a line-smoothing to help illustrate the changes over time. 
+
+```{r, over_time, fig.width=12, warning=F, message=F}
+both.daily <- joint_dat %>%
+	group_by(Date, CITY) %>%
+	summarize(Total_Crimes = n())
+
+both.daily$percapita <- ifelse(both.daily$CITY == "Seattle", both.daily$Total_Crimes/seattle_pop, both.daily$Total_Crimes/sanfran_pop)
+
+ggplot(data=both.daily, aes(y=percapita, x=Date, color=CITY)) + geom_line() + geom_smooth() +
+	labs(title="Overall Per-Capita Crime Rate: June-Aug 2014",
+			 y='Crimes per Capita',
+			 x=NULL)
+
+```
+
+As seen in the time series plot of reported crimes throughout the summer, the per-capita crime rate in Seattle is higher than in San Francisco, at least according to these data sets. The crime rate in Seattle does appear to drop slightly throughout the summer, while in San Francisco, the rate was steady or slightly increasing.  Let's dig into some of the more frequent crime's we observed in each city to understand what is happening.
+
+In order to understand the change in per-capita crime rate throughout the summer of 2014, we will looking at the most frequent crime categories between the two cities: 
+	* Theft from Motor Vehicle
+	* Larceny
+	* Non-Criminal
+	* Public Disorder
+	* Auto Theft
+	* 'All Other Crimes'
+
+The plot with daily reports is too busy to see what's going on, so the same line-smoothing method used in the crime rates plot above was also applied to each individual crime. This makes it much easier to observe the trend of each category over time. 
+  
+
+```{r, crime_v_time, fig.width=12, warning=F, message=F}
+# By Crime Type?
+split_crimes.daily <- joint_dat %>%
+	filter(OFFENSE_CATEGORY_NAME %in% c('Theft from Motor Vehicle', 'All Other Crimes', 'Larceny', 'Auto Theft', 'Public Disorder', 'Non-Criminal')) %>%
+	group_by(Date, CITY, OFFENSE_CATEGORY_NAME) %>%
+	mutate(Total_Crimes_percap = n()/pop)
+
+ggplot(data=split_crimes.daily, aes(y=Total_Crimes_percap, x=Date, color=OFFENSE_CATEGORY_NAME)) + 
+	geom_smooth(se=F, method='loess') + facet_grid(. ~ CITY) +
+	labs(title="Per-Capita Rate for Common Crimes: June-Aug 2014",
+			 y="Crimes per Capita",
+			 x=NULL,
+			 color="NIBRS Category")
+
+```
+
+From the trends throughout the summer of 2014, we can see several key results:
+
+  * San Francisco sees a steep incline in the rate of theft from motor vehicles over the summer.
+  * There is an early spike, and subsequent decrease in 'Public Disorder' charges in San Francisco in the summer of 2014. This appears to be due to a crackdown in prostitution, and coincides with the sting of MyRedbook.com (see here: http://www.dailydot.com/crime/myredbook-fbi-prostitution-sting/)  
+  * Seattle sees sharp drops in citations for Public Disorder and Auto Theft in late July through August.
+  * Seattle observed a drop in theft from cars throughout June.
+
+# Mapping the Car Thefts
+
+Since we saw such a large frequency of thefts from cars, let's take a deeper look into where those breakins are occuring. To do so, we are going subset out all of the 'theft from motor vehicle' reports, and then to use the ggmap library to obtain maps from Google and plot the location of the break-ins. We'll take a high-level look at the locations throughout each city and then zoom in a little closer. 
+
+```{r, car_theft_subset}
+seattle_carthefts <- seattle_dat %>%
+	filter(OFFENSE_CATEGORY_NAME == 'Theft from Motor Vehicle') %>%
+	mutate(MONTH = month(Date, label=T))
+
+sf_carthefts <- sf_dat %>%
+	filter(OFFENSE_CATEGORY_NAME == 'Theft from Motor Vehicle') %>%
+	mutate(MONTH = month(Date, label=T))
+```
+
+```{r, get_maps, fig.show='hold', fig.width=4.5, results='hold', message=F, warning=F}
+sf_map <- qmap(location='san francisco', zoom=12, maptype='roadmap', color='bw')
+seattle_map <- qmap(location='seattle', zoom=12, maptype='roadmap', color='bw')
+
+sf_plot <- sf_map + geom_point(data=sf_carthefts, aes(x=X, y=Y), color="dark green", alpha=.1, size=1.1) +
+	geom_density2d(data=sf_carthefts, aes(x=X, y=Y), size = 0.3) + 
+	stat_density2d(data=sf_carthefts, aes(x=X, y=Y, fill = ..level.., alpha = ..level..), size = 0.01, bins = 16, geom = "polygon") + 
+	scale_fill_gradient(low = "green", high = "red") + 
+	scale_alpha(range = c(0, 0.3), guide = FALSE) + labs(title="Car BreakIns in San Francisco")
+
+seat_plot <- seattle_map + geom_point(data=seattle_carthefts, aes(x=Longitude, y=Latitude), color="dark green", alpha=.1, size=1.1) + 
+	geom_density2d(data=seattle_carthefts, aes(x=Longitude, y=Latitude), size = 0.3) + 
+	stat_density2d(data=seattle_carthefts, aes(x=Longitude, y=Latitude, fill = ..level.., alpha = ..level..), size = 0.01, bins = 16, geom = "polygon") + 
+	scale_fill_gradient(low = "green", high = "red") + 
+	scale_alpha(range = c(0, 0.3), guide = FALSE) + labs(title="Car BreakIns in Seattle")
+
+plot(sf_plot)
+plot(seat_plot)
+```
+
+From the heapmap of where breakins are happening, it looks like most thefts from cars are taking place in the 'South of Market' neighborhood of San Francisco, and in the downtown Seattle area. We'll zoom in on the popular areas and plot for each month to get an idea of how consistent that observation is throughout the summer. 
+
+Here is the map for San Francisco: 
+```{r, zoom_sanfran, fig.width=12, results='hold', warning=F, message=F}
+sf_map <- qmap(location='san francisco', zoom=14, maptype='roadmap', color='bw')
+
+
+sf_map + geom_point(data=sf_carthefts, aes(x=X, y=Y), color="dark green", alpha=.1, size=5) + 
+	geom_density2d(data=sf_carthefts, aes(x=X, y=Y), size = 0.3) + 
+	stat_density2d(data=sf_carthefts, aes(x=X, y=Y, fill = ..level.., alpha = ..level..), size = 0.01, bins = 16, geom = "polygon") + 
+	scale_fill_gradient(low = "green", high = "red") + 
+	scale_alpha(range = c(0, 0.3), guide = FALSE) + facet_grid(. ~ MONTH) + labs(title="Car Break-Ins in San Francisco - Summer 2014")
+
+```
+
+It appears that there is a considerable increase in car break-ins in the South-of-Market district. [Here](http://sanfrancisco.cbslocal.com/2015/06/10/car-break-ins-robberies-on-the-rise-in-san-francisco/) is an article talking about the issue of car breakins in 2015 - apparently the issue is increasing from what we are seeing in the 2014 data. 
+
+And here is a month-to-month map for Seattle:
+```{r, zoom_seattle, fig.width=12, results='hold', warning=F, message=F}
+seattle_map <- qmap(location='seattle', zoom=13, maptype='roadmap', color='bw')
+
+seattle_map + geom_point(data=seattle_carthefts, aes(x=Longitude, y=Latitude), color="dark green", alpha=.1, size=1) + 
+	geom_density2d(data=seattle_carthefts, aes(x=Longitude, y=Latitude), size = 0.3) + 
+	stat_density2d(data=seattle_carthefts, aes(x=Longitude, y=Latitude, fill = ..level.., alpha = ..level..), size = 0.01, bins = 16, geom = "polygon") + 
+	scale_fill_gradient(low = "green", high = "red") + 
+	scale_alpha(range = c(0, 0.3), guide = FALSE) + facet_grid(. ~ MONTH) + labs(title="Car Break-Ins in Seattle - Summer 2014")
+```
+
+In Seattle, it would appear that the hotspot for car break-ins is downtown, but there are widespread breakins across the Seattle area. In July, the heatmap indicates that the break-ins concentrated more downtown, but decreased overall throughout the summer, as indicated by the time series we observed above. 
+
+## Conclusions
+
+The summer 2014 crime rates for Seattle and San Francisco were compared using sample data sets provided by the University of Washington as part of their Data Science at Scale specialization. The analysis indicates that the per-capita crime rate of Seattle is higher than San Francisco's crime rate, across the range of major NIBRS crime categories. In each city, the leading _specific_ type of crime was theft from motor vehicles, followed by larceny.  
+
+A follow-up analysis looked into the preponderance of thefts from motor vehicles, in which neighborhoods they occured, and if those neighborhoods change throughout the summer. It was determined that the spike in theft from motor vehicles in San Francisco was due to a concentrated increase in the South of Market neighborhood, while the decrease in car break-ins in Seattle appeared to be due to a widespread and general decrease across town.  
