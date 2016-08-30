@@ -1,0 +1,110 @@
+---
+title: "Titanic Dataset Analysis"
+author: "Jeremy Beck"
+date: "August 1, 2016"
+output: html_document
+---
+
+## PART 1: PROBLEM DESCRIPTION
+<!--
+# "The task is to predict whether a given passenger survived the sinking of the Titanic based on various attributes including age, location of the passenger's cabin on the ship, #family members, the fare they paid, and other information. Solutions are evaluated by comparing the percentage of correct answers on a test dataset."
+-->
+For this project I have analyzed the Titanic data set obtained from Kaggle. Using the data set, one can predict whether or not a passenger survived or perished using several variables, including Age, Sex, passenger class, family on-board the ship, their ticket number, how much they paid for their ticket, where they boarded the ship, and their cabin's location.  
+
+## PART 2: ANALYSIS OVERVIEW
+
+To approach the problem of determining who survived or perished in the Titanic accident, I broke the analysis into several parts, including an initial exploratory analysis, and modeling using the conditional inference trees from the party package in R. The exploratory analysis consisted of plotting variables against the 'Survived' field to see if there were any clear relationships. I used my insights from that work to determine which variables to include in an initial model. 
+
+### Initial Data Loading
+```{r, warning=F, message=F}
+library(knitr)
+library(caret)
+library(party)
+library(randomForest)
+```
+
+```{r}
+train_dat <- read.csv('~/Desktop/UW_Coursera/titanic_project/data/train.csv', header=T)
+train_dat$Survived <- factor(train_dat$Survived, levels=c(0,1), labels=c('DIED', 'SURVIVED'))
+
+```
+
+We will split the training data into a model-training data set and validation data set for the models, and withhold the test data set for testing final models. To make sure we get a good balance of people who survived/perished in the accident, we will sample using the 'Survived' variable, which will maintain the ratio observed in the full data set. 
+
+```{r}
+set.seed(42)
+train_idx <- createDataPartition(train_dat$Survived, p=0.75, list=F, times=1)
+
+model_dat <- train_dat[train_idx,]
+val_dat <- train_dat[-train_idx,]
+
+```
+
+### Exploratory Analysis
+
+Exploratory plots of each variable vs survival are included below. 
+
+```{r, echo=FALSE, fig.width=12, fig.height=12, warning=F  }
+par(mfrow=c(3,3))
+plot(Survived ~ Pclass, data= model_dat, main="Passenger Class")
+plot(Survived ~ Sex, data= model_dat, main="Sex")
+plot(Survived ~ SibSp, data=model_dat, main="SibSp - # Siblings/Spouses")
+plot(Survived ~ Parch, data=model_dat, main="Parch - # Parents/Children")
+boxplot(Age ~ Survived, data=model_dat, main="Age")
+boxplot(log10(Fare) ~ Survived, data=model_dat, main="Fare - log transformed")
+plot(Survived ~ Embarked, data=model_dat, main="Embarked")
+```
+
+
+## PART 3:INITIAL SOLUTION
+
+My initial solution to predict which passengers survived is to train a conditional inference tree using the Age, Sex, and passanger class (Pclass) variables. Conditional inference trees are similar to the rpart algorithm, except they use a statistical test to determine each split, and can use the p-value of that test to determine when to stop splitting. (Including corrections for multiple tests - ie. Bonferroni).  I will estimate performance of the model using the validation set, and analyze performance by the accuracy of the model.
+
+```{r, fig.width=12, fig.height=8, results='hold'}
+par(mfrow=c(1,1))
+simple_survival_ctree <- ctree(Survived ~ Age + Sex + Pclass, data=model_dat, 
+                               controls=ctree_control(testtype="Bonferroni"))
+
+plot(simple_survival_ctree)
+
+val_dat$ctree_preds <- predict(simple_survival_ctree, newdata=val_dat, type='response')
+
+```
+
+
+## PART 4: INITIAL SOLUTION ANALYSIS
+
+The tree logic can be interpreted with relative ease - for example the left most node says "If you were a female in first or second class, you had a very high probability of surviving the disaster". On the other side of the tree, the far right node suggests: "If you were a male over the age of 9 who wasn't in first class, the odds that you survived are very low".  
+
+This mode appears to be a slightly more complex variation of "Women and Children First", where children were very young (9 years old or younger). This model does appear to suggest if you were a child that wasn't in first or second class, however, your odds of surviving were low.  
+
+This model got a 0.76077 on the public leaderboard, which is actually lower than just picking 'women survive' according to the leaderboard. That's a bit disappointing, but in analyzing the confusion matrix, it looks like this model really just isn't very good at identifying people who survived...
+
+```{r}
+confusionMatrix(val_dat$ctree_preds, val_dat$Survived, positive="SURVIVED")
+```
+
+We can quickly look at who the people are that the model is misclassifying.
+
+
+
+## PART 5: REVISED SOLUTION AND ANALYSIS
+
+To improve the model, I will include information on the family size, as well as the ticket price they paid. The rational behind including the Parch and SibSp variables is that people with larger families may be less likely to survive, given that they were trying to keep track of people in the commotion. Certainly the exploratory data analysis supports this assumption, although these variables were not included in the original model due to the low populations of higher values in these variables. Fare was included solely because in the exploratory data analysis, it appears that on average, people who survived had higher fares.  
+
+```{r, fig.width=12, fig.height=8, results='hold'}
+
+better_survival_ctree <- ctree(Survived ~ Age + Sex + Pclass + Fare + Parch + SibSp, data=model_dat, 
+                               controls=ctree_control(testtype="Bonferroni"))
+
+plot(better_survival_ctree)
+
+val_dat$v2_ctree_preds <- predict(better_survival_ctree, newdata=val_dat, type='response')
+
+```
+
+This model did remarkably better, with a leaderboard score of 0.79426.  In addition, the model was able to correctly identify roughly 78% of the survivors (66 out of 85 total in the validation set).  Most of the gains in the model's prediction of survivability come from it's ability to classify surviving women who were traveling in 3rd class.  In fact, the 19 'missed' survivors are all male. 
+
+```{r}
+confusionMatrix(val_dat$v2_ctree_preds, val_dat$Survived, positive="SURVIVED")
+```
