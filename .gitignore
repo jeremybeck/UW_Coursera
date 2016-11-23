@@ -6,3 +6,5 @@ proj_data/
 .Rhistory
 capstone_project/data/*
 
+.Rproj.user
+*.Rproj
