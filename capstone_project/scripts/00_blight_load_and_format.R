@@ -32,26 +32,30 @@ crime_dat <- read.csv('./data/detroit-crime.csv', header=T, na.strings='', strin
 #----------------------------
 # Geohash Lat/Long Pairs
 #----------------------------
+# Geohashing houses with precision 8
+# check out this site for a visual: http://www.movable-type.co.uk/scripts/geohash.html
+# Alternatively, plug neighbors into the Haversine formula until you get a reasonable distance
+# between neighbors
 
-call311_dat$geohash <- gh_encode(call311_dat$lat, call311_dat$lng, 10)
+call311_dat$geohash <- gh_encode(call311_dat$lat, call311_dat$lng, 8)
 call311_dat$unique_key <- paste0('call311_',seq(1,nrow(call311_dat)))
 
 message('Violation Address has 22k with incorrect lat/long.  maybe look into using MailingAddress')
 blight_viols <- blight_viols %>%
-	mutate(coord = str_extract_all(ViolationAddress, "\\([^()]+\\)")) %>%
+	mutate(coord = str_extract_all(MailingAddress, "\\([^()]+\\)")) %>%
 	transform(coord = gsub('[()]','', coord)) %>%
 	separate(coord, c('lat', 'lng'), ', ') %>%
-	mutate(geohash = gh_encode(as.numeric(lat), as.numeric(lng), 10),
+	mutate(geohash = gh_encode(as.numeric(lat), as.numeric(lng), 8),
 				 unique_key = paste0('blightviol_',row_number()))
 
 demo_permits <- demo_permits %>%
 	mutate(coord = str_extract_all(site_location, "\\([^()]+\\)")) %>%
 	transform(coord = gsub('[()]','', coord)) %>%
 	separate(coord, c('lat', 'lng'), ', ') %>%
-	mutate(geohash = gh_encode(as.numeric(lat), as.numeric(lng), 10),
+	mutate(geohash = gh_encode(as.numeric(lat), as.numeric(lng), 8),
 				 unique_key = paste0('demo_',row_number()))
 
-crime_dat$geohash <- gh_encode(crime_dat$LAT, crime_dat$LON, 10)
+crime_dat$geohash <- gh_encode(crime_dat$LAT, crime_dat$LON, 8)
 crime_dat$unique_key <- paste0('crime_',seq(1,nrow(crime_dat)))
 
 
