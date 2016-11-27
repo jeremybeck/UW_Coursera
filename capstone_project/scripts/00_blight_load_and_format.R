@@ -59,7 +59,6 @@ crime_dat$geohash <- gh_encode(crime_dat$LAT, crime_dat$LON, 8)
 crime_dat$unique_key <- paste0('crime_',seq(1,nrow(crime_dat)))
 
 
-
 #--------------------------------------------------
 # Create a Comprehensive List of Unique Properties
 #--------------------------------------------------
@@ -86,4 +85,17 @@ all_props %>%
 # This was used to map latitude and longitude to parcel number for missing permit data
 # and also contains a wealth of information about sales prices, improvements, and cost
 # per sq. foot. 
+
+detroit_data <- read.csv('./data/Parcel_Points_Ownership.csv', header=T, sep=',', na.strings='', stringsAsFactors=F)
+
+detroit_data <- detroit_data %>%
+	transform(Latitude = as.numeric(Latitude),
+						Longitude = as.numeric(Longitude)) %>%
+	mutate(geohash = gh_encode(Latitude, Longitude, 8))
+
+detroit_data %>% 
+	group_by(geohash) %>%
+	dplyr::summarize(COUNT = n()) %>%
+	arrange(desc(COUNT)) %>%
+	head(10)
 																		
