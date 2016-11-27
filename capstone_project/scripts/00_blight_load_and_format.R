@@ -13,6 +13,21 @@ library(geohash)
 
 
 #-----------------------------
+# Helper Functions
+#-----------------------------
+
+# Write A Function to take a lat/lng pair and return all building associated with it 
+retrieve_buildings <- function(lat, lng, dataset) {
+	require(geohash)
+	
+	hash <- geohash::gh_encode(lat, lng, precision=8)
+	print(hash) 
+	
+	return(subset(dataset, geohash == hash))
+	
+}
+
+#-----------------------------
 # Load in the Data Sets
 #-----------------------------
 
@@ -64,21 +79,24 @@ crime_dat$unique_key <- paste0('crime_',seq(1,nrow(crime_dat)))
 #--------------------------------------------------
 
 all_props <- call311_dat %>%
-	select(geohash, unique_key) %>% # 311 address is 'address'
-	rbind({ blight_viols %>% select(geohash, unique_key)}) %>% # ViolationAddress
-	rbind({ demo_permits %>% select(geohash, unique_key)}) %>% # site_location
-	rbind({ crime_dat %>% select(geohash, unique_key)}) # ADDRESS 
+	select(geohash, unique_key) %>% mutate(source = 'call311') %>% # 311 address is 'address'
+	rbind({ blight_viols %>% select(geohash, unique_key) %>% mutate(source = 'viols')}) %>% # ViolationAddress
+	rbind({ demo_permits %>% select(geohash, unique_key) %>% mutate(source = 'demos')}) %>% # site_location
+	rbind({ crime_dat %>% select(geohash, unique_key) %>% mutate(source = 'crimes')}) # ADDRESS 
 
 length(unique(all_props$geohash))
 
 unique_props <- all_props %>% dplyr::select(geohash) %>% unique()
 
-# Check how frequently different properties appear
-all_props %>% 
+# Check how frequently different geohashes appear in data sets
+test <- all_props %>% 
 	group_by(geohash) %>%
-	summarize(COUNT = n()) %>%
-	arrange(desc(COUNT)) %>%
-	head(20)
+	mutate(HASH_COUNT = n()) %>%
+	ungroup() %>%
+	group_by(geohash, source) %>%
+	summarize(HASH_COUNT = max(HASH_COUNT),
+						SOURCE_COUNT = n()) %>% 
+	arrange(desc(HASH_COUNT), geohash, desc(SOURCE_COUNT))
 
 # Parcel File obtained from the URL:
 # https://data.detroitmi.gov/Property-Parcels/Parcel-Points-Ownership/eijm-6nr4/data
@@ -98,4 +116,9 @@ detroit_data %>%
 	dplyr::summarize(COUNT = n()) %>%
 	arrange(desc(COUNT)) %>%
 	head(10)
+
+
+	
+	
+	
 																		
